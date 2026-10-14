@@ -25,6 +25,36 @@
     touch-action: none;
   }
   p { font-size: 13px; opacity: 0.8; text-align: center; }
+  button {
+    font-family: monospace;
+    font-size: 14px;
+    padding: 6px 16px;
+    margin: 4px;
+    border: 3px solid #6b4fa0;
+    border-radius: 4px;
+    background: #2a2050;
+    color: #f4e9ff;
+    cursor: pointer;
+  }
+  button:hover { background: #3d2f70; }
+  #confirm-btn { border-color: #ff4f6d; }
+  /* The dark see-through layer behind the confirmation box */
+  #reset-popup {
+    display: none; /* hidden until Reset is clicked */
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    align-items: center;
+    justify-content: center;
+  }
+  #reset-popup .box {
+    background: #1b1530;
+    border: 4px solid #ffd84f;
+    border-radius: 6px;
+    padding: 20px;
+    max-width: 300px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -32,6 +62,16 @@
 <canvas id="game" width="320" height="240"></canvas>
 <p>Move: Arrow keys / WASD (or tap where you want to float)<br>
 Collect 10 candies to unlock the <b>Sweet Spirit</b> badge!</p>
+<button id="reset-btn">Reset</button>
+
+<!-- Confirmation popup (hidden until you click Reset) -->
+<div id="reset-popup">
+  <div class="box">
+    <p>Clicking reset will delete any progress you have made, including candies and badges earned</p>
+    <button id="confirm-btn">Confirm</button>
+    <button id="exit-btn">Exit</button>
+  </div>
+</div>
 
 <script>
 // ===================== SETTINGS =====================
@@ -213,6 +253,7 @@ for (let i = 0; i < CANDIES_ON_SCREEN; i++) spawnCandy();
 // ===================== CONTROLS =====================
 const keys = {};
 window.addEventListener("keydown", e => {
+  if (paused) return; // ignore the keyboard while the Reset popup is open
   keys[e.key.toLowerCase()] = true;
   target = null; // keyboard takes over from tapping
   if (e.key.startsWith("Arrow")) e.preventDefault(); // stop page from scrolling
@@ -237,8 +278,32 @@ function restart() {
   for (let i = 0; i < CANDIES_ON_SCREEN; i++) spawnCandy();
 }
 
+// ===================== RESET BUTTON =====================
+const resetPopup = document.getElementById("reset-popup");
+let paused = false; // the game freezes while the popup is open
+
+function showResetPopup(show) {
+  resetPopup.style.display = show ? "flex" : "none";
+  paused = show;
+  for (const k in keys) keys[k] = false; // forget held keys so the ghost doesn't drift
+  target = null;
+}
+
+document.getElementById("reset-btn").addEventListener("click", () => showResetPopup(true));
+document.getElementById("exit-btn").addEventListener("click", () => showResetPopup(false));
+document.getElementById("confirm-btn").addEventListener("click", () => {
+  localStorage.removeItem("sweetSpiritBadge"); // erase the saved badge
+  hasBadge = false;
+  sparkles = [];
+  ghost.x = W / 2 - 10;  // put the ghost back in the middle
+  ghost.y = H / 2 - 10;
+  restart();              // candies back to 0
+  showResetPopup(false);
+});
+
 // ===================== UPDATE (game rules) =====================
 function update() {
+  if (paused) return;
   time++;
   if (won) return;
 
