@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boo's Candy Hunt</title>
+<style>
+  body {
+    margin: 0;
+    background: #1b1530;
+    color: #f4e9ff;
+    font-family: monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  h1 { font-size: 20px; margin: 8px 0; }
+  canvas {
+    width: min(96vw, 640px);
+    image-rendering: pixelated; /* keeps the pixel art crisp when scaled up */
+    border: 4px solid #6b4fa0;
+    border-radius: 6px;
+    touch-action: none;
+  }
+  p { font-size: 13px; opacity: 0.8; text-align: center; }
+</style>
+</head>
+<body>
+<h1>👻 Boo's Candy Hunt</h1>
+<canvas id="game" width="320" height="240"></canvas>
+<p>Move: Arrow keys / WASD (or tap where you want to float)<br>
+Collect 10 candies to unlock the <b>Sweet Spirit</b> badge!</p>
+
+<script>
+// ===================== SETTINGS =====================
+// Change these numbers to tweak the game!
+const CANDIES_TO_WIN = 10;   // how many candies unlock the badge
+const GHOST_SPEED = 1.4;     // how fast the ghost floats
+const CANDIES_ON_SCREEN = 3; // how many candies exist at once
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+
+// ===================== PIXEL ART =====================
+// Each sprite is a little grid of letters. Each letter is a color.
+// "." means see-through (draw nothing).
+const COLORS = {
+  W: "#ffffff", // white
+  G: "#d8d0f0", // ghost shadow
+  K: "#1b1530", // black-ish (eyes)
+  P: "#ff8fc7", // pink
+  R: "#ff4f6d", // red
+  Y: "#ffd84f", // yellow
+  O: "#ff9f3f", // orange
+  S: "#8a87a0", // stone grey
+  D: "#5e5b75", // dark stone
+  B: "#6b4a2f", // brown
+  L: "#3f8f4f", // leaf green
+  M: "#2c6b3a", // dark green
+  H: "#7a3fb0", // hat purple
+};
+
+const GHOST = [
+  "...WWWW...",
+  "..WWWWWW..",
+  ".WWWWWWWW.",
+  ".WWKWWKWW.",
+  ".WWKWWKWW.",
+  ".WPWWWWPW.",
+  ".WWWKKWWW.",
+  ".WWWWWWWW.",
+  ".WWWWWWWW.",
+  ".GWWGWWGW.",
+  ".G.WG.WG..",
+];
+
+// The cosmetic reward: a little witch hat the ghost wears after winning.
+const HAT = [
+  "....H.....",
+  "...HHH....",
+  "..HHYHH...",
+  "HHHHHHHHHH",
+];
+
+const CANDY_SPRITES = [
+  [ // wrapped candy
+    "Y.....Y",
+    "YYRRRYY",
+    "YRRWRRY",
+    "YYRRRYY",
+    "Y.....Y",
+  ],
+  [ // round lollipop
+    ".PPP.",
+    "PPWPP",
+    "PPPPP",
+    ".PPP.",
+    "..W..",
+    "..W..",
+  ],
+  [ // candy corn
+    "..W..",
+    ".YYY.",
+    ".OOO.",
+    "OOOOO",
+  ],
+];
+
+const TOMBSTONE = [
+  "..SSSS..",
+  ".SSSSSS.",
+  "SSDSSDSS",
+  "SSSDDSSS",
+  "SSSDDSSS",
+  "SSSSSSSS",
+  "SSSSSSSS",
+  "DDDDDDDD",
+];
+
+const CROSS = [
+  "..SS..",
+  "..SS..",
+  "SSSSSS",
+  "SSSSSS",
+  "..SS..",
+  "..SS..",
+  "..SS..",
+  ".DDDD.",
+];
+
+const TREE = [
+  "...LLLL...",
+  ".LLLLLLLL.",
+  "LLLMLLLMLL",
+  "LLLLLLLLLL",
+  ".LMLLLLML.",
+  "..LLLLLL..",
+  "....BB....",
+  "....BB....",
+  "....BB....",
+  "...BBBB...",
+];
+
+const SCALE = 2; // every sprite pixel = 2x2 canvas pixels
+
+// Draws a sprite (grid of letters) at position x, y
+function drawSprite(sprite, x, y, scale = SCALE) {
+  for (let row = 0; row < sprite.length; row++) {
+    for (let col = 0; col < sprite[row].length; col++) {
+      const letter = sprite[row][col];
+      if (letter === ".") continue;
+      ctx.fillStyle = COLORS[letter];
+      ctx.fillRect(Math.round(x + col * scale), Math.round(y + row * scale), scale, scale);
+    }
+  }
+}
+
+// ===================== THE WORLD =====================
+// Where the graves and trees are. Ghosts can float over everything,
+// but candies won't appear on top of them.
+const decorations = [
+  { sprite: TOMBSTONE, x: 40,  y: 50 },
+  { sprite: CROSS,     x: 110, y: 40 },
+  { sprite: TOMBSTONE, x: 200, y: 60 },
+  { sprite: TREE,      x: 268, y: 30 },
+  { sprite: CROSS,     x: 60,  y: 150 },
+  { sprite: TOMBSTONE, x: 150, y: 130 },
+  { sprite: TOMBSTONE, x: 240, y: 160 },
+  { sprite: TREE,      x: 10,  y: 180 },
+  { sprite: CROSS,     x: 190, y: 200 },
+];
+
+// Little background details that never change (grass tufts and stars)
+const grassTufts = [];
+for (let i = 0; i < 40; i++) {
+  grassTufts.push({ x: Math.random() * W, y: 30 + Math.random() * (H - 30) });
+}
+const stars = [];
+for (let i = 0; i < 15; i++) {
+  stars.push({ x: Math.random() * W, y: Math.random() * 22 });
+}
+
+// ===================== GAME STATE =====================
+const ghost = { x: W / 2 - 10, y: H / 2 - 10, w: 20, h: 22, facing: 1 };
+let candies = [];
+let score = 0;
+let won = false;
+let time = 0;            // counts frames; used for the floaty bobbing
+let sparkles = [];       // little "+1" pops when you grab candy
+let target = null;       // where you tapped (for touch / mouse control)
+
+// The badge is saved in the browser so you keep it after refreshing!
+let hasBadge = localStorage.getItem("sweetSpiritBadge") === "yes";
+
+function spawnCandy() {
+  // Pick a random spot that isn't on top of a grave or tree
+  let x, y, tries = 0;
+  do {
+    x = 10 + Math.random() * (W - 30);
+    y = 35 + Math.random() * (H - 55);
+    tries++;
+  } while (tries < 50 && decorations.some(d =>
+    x < d.x + d.sprite[0].length * SCALE + 4 && x + 14 > d.x - 4 &&
+    y < d.y + d.sprite.length * SCALE + 4 && y + 12 > d.y - 4));
+  const sprite = CANDY_SPRITES[Math.floor(Math.random() * CANDY_SPRITES.length)];
+  candies.push({ x, y, sprite });
+}
+for (let i = 0; i < CANDIES_ON_SCREEN; i++) spawnCandy();
+
+// ===================== CONTROLS =====================
+const keys = {};
+window.addEventListener("keydown", e => {
+  keys[e.key.toLowerCase()] = true;
+  target = null; // keyboard takes over from tapping
+  if (e.key.startsWith("Arrow")) e.preventDefault(); // stop page from scrolling
+  if (won && e.key === "Enter") restart();
+});
+window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+
+// Tap / click: ghost floats toward where you pointed
+canvas.addEventListener("pointerdown", e => {
+  if (won) { restart(); return; }
+  const rect = canvas.getBoundingClientRect();
+  target = {
+    x: (e.clientX - rect.left) * (W / rect.width),
+    y: (e.clientY - rect.top) * (H / rect.height),
+  };
+});
+
+function restart() {
+  score = 0;
+  won = false;
+  candies = [];
+  for (let i = 0; i < CANDIES_ON_SCREEN; i++) spawnCandy();
+}
+
+// ===================== UPDATE (game rules) =====================
+function update() {
+  time++;
+  if (won) return;
+
+  // Figure out which way to move
+  let dx = 0, dy = 0;
+  if (keys["arrowleft"]  || keys["a"]) dx -= 1;
+  if (keys["arrowright"] || keys["d"]) dx += 1;
+  if (keys["arrowup"]    || keys["w"]) dy -= 1;
+  if (keys["arrowdown"]  || keys["s"]) dy += 1;
+
+  if (target) {
+    const tx = target.x - (ghost.x + ghost.w / 2);
+    const ty = target.y - (ghost.y + ghost.h / 2);
+    const dist = Math.hypot(tx, ty);
+    if (dist < 2) target = null;
+    else { dx = tx / dist; dy = ty / dist; }
+  }
+
+  // Keep diagonal speed the same as straight speed
+  const len = Math.hypot(dx, dy);
+  if (len > 0) {
+    ghost.x += (dx / len) * GHOST_SPEED;
+    ghost.y += (dy / len) * GHOST_SPEED;
+    if (dx !== 0) ghost.facing = dx > 0 ? 1 : -1;
+  }
+
+  // Don't let the ghost float off the screen
+  ghost.x = Math.max(0, Math.min(W - ghost.w, ghost.x));
+  ghost.y = Math.max(24, Math.min(H - ghost.h, ghost.y));
+
+  // Check if the ghost is touching any candy
+  for (let i = candies.length - 1; i >= 0; i--) {
+    const c = candies[i];
+    const cw = c.sprite[0].length * SCALE, ch = c.sprite.length * SCALE;
+    if (ghost.x < c.x + cw && ghost.x + ghost.w > c.x &&
+        ghost.y < c.y + ch && ghost.y + ghost.h > c.y) {
+      candies.splice(i, 1);
+      score++;
+      sparkles.push({ x: c.x, y: c.y, life: 30 });
+      if (score >= CANDIES_TO_WIN) {
+        won = true;
+        hasBadge = true;
+        localStorage.setItem("sweetSpiritBadge", "yes");
+      } else {
+        spawnCandy();
+      }
+    }
+  }
+
+  // Fade out the "+1" pops
+  sparkles.forEach(s => { s.life--; s.y -= 0.5; });
+  sparkles = sparkles.filter(s => s.life > 0);
+}
+
+// ===================== DRAW (what you see) =====================
+function draw() {
+  // Night sky strip at the top
+  ctx.fillStyle = "#2a2050";
+  ctx.fillRect(0, 0, W, 24);
+  ctx.fillStyle = "#fff6c0";
+  stars.forEach(s => ctx.fillRect(Math.round(s.x), Math.round(s.y), 1, 1));
+  // Moon
+  ctx.fillStyle = "#fff6c0";
+  ctx.fillRect(290, 4, 10, 10);
+  ctx.fillStyle = "#2a2050";
+  ctx.fillRect(294, 4, 6, 6);
+
+  // Grass
+  ctx.fillStyle = "#35604a";
+  ctx.fillRect(0, 24, W, H - 24);
+  ctx.fillStyle = "#4a7d5c";
+  grassTufts.forEach(g => {
+    ctx.fillRect(Math.round(g.x), Math.round(g.y), 1, 2);
+    ctx.fillRect(Math.round(g.x) + 2, Math.round(g.y) - 1, 1, 3);
+  });
+
+  // Fence along the top of the graveyard
+  ctx.fillStyle = "#1e1a2e";
+  ctx.fillRect(0, 26, W, 2);
+  for (let x = 2; x < W; x += 8) ctx.fillRect(x, 20, 2, 10);
+
+  // Graves and trees
+  decorations.forEach(d => drawSprite(d.sprite, d.x, d.y));
+
+  // Candies (they gently bounce)
+  candies.forEach((c, i) => {
+    const bounce = Math.round(Math.sin(time / 10 + i) * 1.5);
+    drawSprite(c.sprite, c.x, c.y + bounce);
+  });
+
+  // The ghost! Bobs up and down to look floaty, and is a little see-through
+  const bob = Math.round(Math.sin(time / 12) * 2);
+  const gx = Math.round(ghost.x), gy = Math.round(ghost.y) + bob;
+  ctx.globalAlpha = 0.9;
+  ctx.save();
+  if (ghost.facing < 0) { // flip the sprite when moving left
+    ctx.translate(gx * 2 + ghost.w, 0);
+    ctx.scale(-1, 1);
+  }
+  drawSprite(GHOST, gx, gy);
+  if (hasBadge) drawSprite(HAT, gx, gy - 7);
+  ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // "+1" pops
+  ctx.fillStyle = "#ffd84f";
+  ctx.font = "8px monospace";
+  sparkles.forEach(s => ctx.fillText("+1", s.x, s.y));
+
+  // Score bar
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "10px monospace";
+  ctx.fillText(`Candy: ${score}/${CANDIES_TO_WIN}`, 4, 12);
+  if (hasBadge) ctx.fillText("🏅", 110, 13);
+
+  // Win screen
+  if (won) {
+    ctx.fillStyle = "rgba(27, 21, 48, 0.85)";
+    ctx.fillRect(40, 70, 240, 100);
+    ctx.strokeStyle = "#ffd84f";
+    ctx.strokeRect(40.5, 70.5, 239, 99);
+    ctx.fillStyle = "#ffd84f";
+    ctx.textAlign = "center";
+    ctx.font = "12px monospace";
+    ctx.fillText("🏅 BADGE UNLOCKED! 🏅", W / 2, 95);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "10px monospace";
+    ctx.fillText("Sweet Spirit", W / 2, 112);
+    ctx.fillText("Your ghost now wears a witch hat!", W / 2, 130);
+    ctx.fillText("Press Enter or tap to play again", W / 2, 155);
+    ctx.textAlign = "left";
+  }
+}
+
+// ===================== GAME LOOP =====================
+// This runs about 60 times per second: update the rules, then redraw.
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
